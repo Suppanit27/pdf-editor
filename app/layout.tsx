@@ -23,8 +23,8 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${notoSansThai.variable} antialiased`}>
         <div className="flex h-screen flex-col">
-          <Navbar />
-          <div className="flex flex-1 flex-col">
+        <h5 className="text-base font-medium text-gray-900 text-center font-sukhumvit-set text-[18px]">รายละเอียดเอกสาร</h5>          
+        <div className="flex flex-1 flex-col">
             <div className="min-h-0 flex-1">{children}</div>
             <Footer />
           </div>

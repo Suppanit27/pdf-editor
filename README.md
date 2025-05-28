@@ -4,7 +4,7 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 First, run the development server:
 
-```bash
+http://localhost:3000?pdfUrl="ลิงค์url"
 npm run dev
 # or
 yarn dev
