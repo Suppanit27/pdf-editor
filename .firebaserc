@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "singms24"
-  }
+  },
+  "targets": {
+    "singms24": {
+      "hosting": {
+        "signms": [
+          "signms24"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

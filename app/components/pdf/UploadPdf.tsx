@@ -1,10 +1,24 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
-import { PDFDocumentProxy } from 'pdfjs-dist'
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch'
 import { ChevronLeft, ChevronRight, Save, Signature, X, ChevronDown } from 'lucide-react'
 import SignatureCanvas from 'react-signature-canvas'
+import { PDFDocument } from 'pdf-lib'
+import { getDocument, GlobalWorkerOptions, PDFDocumentProxy } from 'pdfjs-dist';
+
+GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+
+
+const fetchAndRenderPDF = async (url: string) => {
+  const response = await fetch(url);
+  const arrayBuffer = await response.arrayBuffer();
+
+  const loadingTask = getDocument({ data: arrayBuffer });
+  const pdf: PDFDocumentProxy = await loadingTask.promise;
+
+  console.log('Total pages:', pdf.numPages);
+};
 
 // แยกการ import อาจ
 const loadPDFModule = async () => {
@@ -47,10 +61,18 @@ const UploadPdf: React.FC = () => {
   const [signatureOptions, setSignatureOptions] = useState<string[]>([])
 
   useEffect(() => {
-    // อ่าน PDF URL จาก query parameters
+    // อ่าน PDF URL และ userId จาก query parameters
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
       const pdfUrlParam = urlParams.get('pdfUrl');
+      const userIdParam = urlParams.get('userId');
+
+      if (userIdParam) {
+        // เก็บ userId ใน localStorage เË่อใช้ต่อ
+        localStorage.setItem('id', userIdParam);
+        localStorage.setItem('currentSignatureUserId', userIdParam);
+        console.log('User ID from URL:', userIdParam);
+      }
 
       if (pdfUrlParam) {
         setPdfUrl(pdfUrlParam);
@@ -203,87 +225,160 @@ const UploadPdf: React.FC = () => {
   }
 
   const savePdfWithSignature = async () => {
-    if (!pdfDocument || !canvasRef.current) return;
+    if (!pdfDocument || !canvasRef.current) {
+      alert('โหลด PDF ก่อน');
+      return;
+    }
 
     try {
-      // แสดงข้อความ
-      alert('<|im_start|>่ะ<|im_start|>่ะไฟล์...');
-
-      // สร้าง Base64 ของ PDF พร้อมลายเซ็น
-      const tempCanvas = document.createElement('canvas');
-      const tempCtx = tempCanvas.getContext('2d');
-      if (!tempCtx) return;
-
-      tempCanvas.width = canvasRef.current.width;
-      tempCanvas.height = canvasRef.current.height;
-      tempCtx.drawImage(canvasRef.current, 0, 0);
-
-      if (showSignatureOnPdf && signatureImgUrl) {
-        const img = new Image();
-        img.src = signatureImgUrl;
-        await new Promise(resolve => {
-          img.onload = resolve;
-        });
-
-        const signatureWidth = tempCanvas.width * 0.2;
-        const signatureHeight = (signatureWidth * img.height) / img.width;
-
-        tempCtx.drawImage(
-          img,
-          signaturePosition.x * (tempCanvas.width / canvasRef.current.offsetWidth),
-          signaturePosition.y * (tempCanvas.height / canvasRef.current.offsetHeight),
-          signatureWidth,
-          signatureHeight
-        );
-      }
-
-      // แปลง Canvas เป็น Blob
-      const pdfBlob = await new Promise<Blob>((resolve) => {
-        tempCanvas.toBlob((blob) => {
-          resolve(blob as Blob);
-        }, 'image/png');
-      });
-
-      // สร้างชื่อไฟล์
-      const timestamp = new Date().getTime();
-      const fileName = `signed-pdf-${timestamp}.png`;
-
-      // โหลด
-      const uploadToS3 = await uploadToS3Module();
-      if (!uploadToS3) {
-        throw new Error('S3 module could not be loaded');
+      setIsLoading(true);
+      
+      // อ่าน userId จาก localStorage (<lemma่เก็บไว้จาก URL parameters)
+      const userId = localStorage.getItem('currentSignatureUserId') || localStorage.getItem('id') || 'web_user';
+      console.log('Using user ID for saving:', userId);
+      
+      // สร้าง PDF ใหม่
+      const pdfDoc = await PDFDocument.create();
+      
+      // แปลง canvas เป็นภาพ
+      const canvas = canvasRef.current;
+      const imageDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      
+      // แปลง data URL เป็น Uint8Array
+      const imageData = await fetch(imageDataUrl).then(res => res.arrayBuffer());
+      
+      // เลือกภาพลงใน PDF
+      const image = await pdfDoc.embedJpg(imageData);
+      
+      // ตรวจสอบภาพยส่วนของภาพ
+      const canvasWidth = canvas.width / window.devicePixelRatio;
+      const canvasHeight = canvas.height / window.devicePixelRatio;
+      const imageRatio = canvasWidth / canvasHeight;
+      
+      // เลือกขนาดกระดาษตามภาพยส่วนของภาพ
+      let pageWidth, pageHeight;
+      
+      if (imageRatio > 1) {
+        // ภาพแนวนอน - ใช้ A4 แนวนอน
+        pageWidth = 841.89;
+        pageHeight = 595.28;
+      } else {
+        // ภาพแนวตั้ง - ใช้ A4 แนวตั้ง
+        pageWidth = 595.28;
+        pageHeight = 841.89;
       }
       
-      const s3Url = await uploadToS3(pdfBlob, fileName, 'image/png');
-      console.log('PDF uploaded to S3:', s3Url);
-
+      // สร้างหน้า PDF ตามภาพยทางของภาพ
+      const page = pdfDoc.addPage([pageWidth, pageHeight]);
+      
+      // คำนวณขนาดภาพยเหมาะสม - ใช้ 90% ของหน้ากระดาษ
+      const maxWidth = pageWidth * 0.9;
+      const maxHeight = pageHeight * 0.9;
+      
+      // คำนวณขนาดภาพ<lemma่จะใช้
+      let scaledWidth, scaledHeight;
+      
+      if (canvasWidth / maxWidth > canvasHeight / maxHeight) {
+        // <lemmaขนาดตามความกว้าง
+        scaledWidth = maxWidth;
+        scaledHeight = (maxWidth / canvasWidth) * canvasHeight;
+      } else {
+        // <lemmaขนาดตามความ<lemma
+        scaledHeight = maxHeight;
+        scaledWidth = (maxHeight / canvasHeight) * canvasWidth;
+      }
+      
+      // คำนวณตำแหน่งเพื่อให้ภาพอยู่ตรงกลาง
+      const x = (pageWidth - scaledWidth) / 2;
+      const y = (pageHeight - scaledHeight) / 2;
+      
+      // วางภาพลงในหน้า PDF
+      page.drawImage(image, {
+        x: x,
+        y: y,
+        width: scaledWidth,
+        height: scaledHeight,
+      });
+      
+      // เลือกข้อมูล metadata
+      pdfDoc.setTitle('เอกสารลายเซ็น');
+      pdfDoc.setAuthor('ระบบลายเซ็นเล็กทรอนิกส์');
+      pdfDoc.setCreationDate(new Date());
+      pdfDoc.setModificationDate(new Date());
+      
+      // ตั้งค่าการบอัดเพื่ออลดขนาดไฟล์
+      const pdfBytes = await pdfDoc.save({
+        useObjectStreams: true,
+        addDefaultPage: false,
+      });
+      
+      // แปลงเป็น Blob
+      const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+      
+      // สร้างชื่อไฟล์
+      const timestamp = new Date().getTime();
+      const fileName = `signed-pdf-${timestamp}.pdf`;
+      
+      // โหลดไฟล์ S3
+      const uploadToS3 = await uploadToS3Module();
+      if (!uploadToS3) {
+        throw new Error('ไม่สามารถโหลดโมดูล S3 ได้');
+      }
+      
+      // แปลง Blob เป็น Base64
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve) => {
+        reader.onloadend = () => {
+          const base64data = reader.result as string;
+          resolve(base64data);
+        };
+      });
+      reader.readAsDataURL(pdfBlob);
+      const base64data = await base64Promise;
+      
+      // โหลดไฟล์<lemma้น S3 โดยใช้ userId จาก URL
+      const s3Url = await uploadToS3(base64data, fileName, 'application/pdf', userId);
+      
       // อ่าน callback URL จาก query parameters
       const urlParams = new URLSearchParams(window.location.search);
       const callbackUrl = urlParams.get('callback');
 
       if (callbackUrl) {
-        // ส่ง S3 URL ล่วงหน้า
+        // ส่ง S3 URL และ userId
         const response = await fetch(callbackUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            imageUrl: s3Url,
-            imageBase64: tempCanvas.toDataURL('image/png')
+            pdfUrl: s3Url,
+            fileName: fileName,
+            userId: userId
           }),
         });
 
         if (response.ok) {
-          alert('เอกสารพร้อมลายเซ็นล่วงหน้า!');
+          alert('เอกสารพร้อมลายเซ็นแล้ว!');
           window.close();
         } else {
-          alert('ไม่สามารถเอกสารได้');
+          alert('ไม่สามารถส่งเอกสารได้');
         }
       } else {
-        alert('เอกสารล่วงหน้า: ' + s3Url);
+        // แสดงข้อความสำเร็จ
+        alert(`PDF สำเร็จ\nURL: ${s3Url}\nUser ID: ${userId}`);
+        
+        // ดาวน์โหลดไฟล์
+        const downloadLink = document.createElement('a');
+        downloadLink.href = URL.createObjectURL(pdfBlob);
+        downloadLink.download = fileName;
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
       }
+      
     } catch (error) {
-      console.error('Error saving PDF to S3:', error);
-      alert('ข้อพลาดในการโหลดไฟล์: ' + error);
+      console.error('ข้อ<lemmaพลาดในการสร้าง PDF:', error);
+      alert('ข้อ<lemmaพลาดในการสร้าง PDF: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -300,10 +395,14 @@ const UploadPdf: React.FC = () => {
   const fetchAndShowSignature = async () => {
     try {
       // อ่าน ID ใช้จาก localStorage
-      const userId = localStorage.getItem('id') || 'web_user';
+      // const userId = localStorage.getItem('id') || 'web_user';
+            const urlParams = new URLSearchParams(window.location.search);
+
+      const userIdParam = urlParams.get('userId');
 
       // โหลดลายเซ็นจาก API
-      const signatures = await loadRDSSign(userId);
+      const signatures = await loadRDSSign(userIdParam?.toString() || 'web_user');
+      console.log('Fetched signatures:', signatures);
 
       if (signatures.length > 0) {
         // ใช้ลายเซ็นแรก
@@ -322,7 +421,7 @@ const UploadPdf: React.FC = () => {
   };
 
   // โหลดลายเซ็นตามโค้ด Flutter
-  const loadRDSSign = async (userId: string) => {
+  const loadRDSSign = async (userIdParam: string) => {
     try {
       // เคลียร์ลายเซ็นเก่า
       setSignatureOptions([]);
@@ -330,11 +429,13 @@ const UploadPdf: React.FC = () => {
       // URL API
       const url = 'https://mhmo3nnbr5.execute-api.ap-southeast-1.amazonaws.com/latest';
 
-      // สร้าง payload
+      // สร้าง payload ด้วย userId <lemma่ได้จาก URL
       const payload = {
         "menu": "loadSignature",
-        "id": userId
+        "id": userIdParam
       };
+
+      console.log('Loading signatures for user ID:', userIdParam);
 
       // เรียก API
       const response = await fetch(url, {
@@ -349,13 +450,19 @@ const UploadPdf: React.FC = () => {
 
       if (jsonResponse.statusCode === 200) {
         if (jsonResponse.result && jsonResponse.result.length > 0) {
-          // เก็บลิงก์ลายเซ็นทั้งหมด
-          const links = jsonResponse.result.map((data: any) => data.signature_upload);
-          setSignatureOptions(links);
-          return links;
+          console.log('Found signatures:', jsonResponse.result.length);
+          // เก็บลิงก์ลายเซ็นพร้อม userId
+          const links = jsonResponse.result.map((data: any) => ({
+            url: data.signature_upload,
+            userId: userIdParam
+          }));
+          // เก็บเฉพาะ URL<lemmaการแสดงผล
+          const urls = links.map((item: { url: any }) => item.url);
+          setSignatureOptions(urls);
+          return urls;
         }
       } else {
-        console.log('No data!!');
+        console.log('No signatures found for user ID:', userIdParam);
       }
 
       return [];
@@ -366,96 +473,179 @@ const UploadPdf: React.FC = () => {
   };
 
   return (
-    <div className="overflow-y-auto">
-      {!pdfDocument && (
-        <div className="text-center p-4">
-          <p>โหลด PDF...</p>
+    <div className="overflow-y-auto bg-gray-50 min-h-screen">
+      {!pdfDocument && !isLoading && (
+        <div className="text-center p-8 bg-white rounded-lg shadow-sm max-w-md mx-auto mt-8">
+          <h2 className="text-xl font-medium text-gray-800 mb-4">เอกสาร PDF</h2>
           {pdfUrl ? (
-            <p className="text-sm text-gray-500">จาก URL: {pdfUrl}</p>
+            <div className="animate-pulse">
+              <p className="text-gray-600 mb-2">โหลด PDF จาก URL...</p>
+              <p className="text-sm text-gray-500 truncate max-w-xs mx-auto">{pdfUrl}</p>
+            </div>
           ) : (
-            <p className="text-sm text-red-500">ไม่พบ URL ของ PDF ณาระพารามิเตอร์ pdfUrl</p>
+            <div>
+              <p className="text-gray-600 mb-4">ปโหลดไฟล์ PDF หรือ URL</p>
+              <input
+                type="file"
+                accept="application/pdf"
+                onChange={handleFileChange}
+                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+              />
+            </div>
           )}
         </div>
       )}
+      
+      {isLoading && (
+        <div className="flex flex-col items-center justify-center h-64 p-4">
+          <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <p className="text-gray-600">โหลดเอกสาร...</p>
+        </div>
+      )}
+      
       {pdfDocument && (
-        <div ref={containerRef}>
-          <TransformWrapper initialScale={1} minScale={1} maxScale={5} wheel={{ step: 0.1 }}>
-            {({ zoomIn, zoomOut, resetTransform }) => (
-              <>
-                <div className="flex gap-2 items-center justify-center border">
+        <div className="max-w-5xl mx-auto px-4 py-6">
+          <div ref={containerRef} className="bg-white rounded-lg shadow-lg overflow-hidden">
+            <div className="flex flex-wrap gap-2 items-center justify-end p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border-b">
+              {totalPages > 1 && (
+                <div className="flex items-center gap-1 bg-white px-2 py-1 rounded-full shadow-sm">
                   <button
-                    onClick={() => zoomIn()}
-                    className="px-3 py-1 bg-blue-500 text-white rounded"
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage <= 1}
+                    className="p-1 text-blue-600 disabled:text-gray-300 transition-colors"
+                    aria-label="หน้าก่อนหน้า"
                   >
-                    ย่อ
+                    <ChevronLeft size={18} />
                   </button>
+                  <span className="text-sm font-medium text-gray-700 mx-1">
+                    {currentPage}/{totalPages}
+                  </span>
                   <button
-                    onClick={() => zoomOut()}
-                    className="px-3 py-1 bg-blue-500 text-white rounded"
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage >= totalPages}
+                    className="p-1 text-blue-600 disabled:text-gray-300 transition-colors"
+                    aria-label="หน้าถัดไป"
                   >
-                    ขยาย
+                    <ChevronRight size={18} />
                   </button>
+                </div>
+              )}
               
-                  <div className="relative">
-                    <button
-                      onClick={() => setShowSignatureMenu(!showSignatureMenu)}
-                      className="flex items-center gap-1 px-3 py-1 bg-purple-500 text-white rounded"
-                    >
-                      <Signature size={16} /> ลายเซ็น <ChevronDown size={16} />
-                    </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => zoomIn?.()}
+                  className="p-2 bg-white hover:bg-blue-50 text-blue-600 rounded-full shadow-sm transition-colors"
+                  aria-label="ขยาย"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    <line x1="11" y1="8" x2="11" y2="14"></line>
+                    <line x1="8" y1="11" x2="14" y2="11"></line>
+                  </svg>
+                </button>
+                <button
+                  onClick={() => zoomOut?.()}
+                  className="p-2 bg-white hover:bg-blue-50 text-blue-600 rounded-full shadow-sm transition-colors"
+                  aria-label="ย่อ"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    <line x1="8" y1="11" x2="14" y2="11"></line>
+                  </svg>
+                </button>
+                <button
+                  onClick={() => resetTransform?.()}
+                  className="p-2 bg-white hover:bg-blue-50 text-blue-600 rounded-full shadow-sm transition-colors"
+                  aria-label="พอหน้าจอ"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M15 3h6v6"></path>
+                    <path d="M9 21H3v-6"></path>
+                    <path d="M21 3l-7 7"></path>
+                    <path d="M3 21l7-7"></path>
+                  </svg>
+                </button>
+              </div>
+              
+              <div className="flex gap-2">
+                {showSignatureOnPdf && (
+                  <button
+                    onClick={() => setShowSignatureOnPdf(false)}
+                    className="flex items-center gap-1 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md shadow-sm transition-colors"
+                  >
+                    <X size={16} />
+                    <span className="hidden sm:inline">ลบลายเซ็น</span>
+                  </button>
+                )}
+                
+                <div className="relative">
+                  <button
+                    onClick={() => setShowSignatureMenu(!showSignatureMenu)}
+                    className="flex items-center gap-1 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md shadow-sm transition-colors"
+                  >
+                    <Signature size={16} />
+                    <span className="hidden sm:inline">ลายเซ็น</span>
+                    <ChevronDown size={14} />
+                  </button>
 
-                    {showSignatureMenu && (
-                      <div className="absolute top-full left-0 mt-1 bg-white shadow-lg rounded z-50 w-48">
-                        <button
-                          onClick={() => {
-                            setIsSignature(true);
-                            setShowSignatureMenu(false);
-                          }}
-                          className="flex items-center gap-2 w-full px-4 py-2 text-left hover:bg-gray-100"
-                        >
-                          <Signature size={16} /> เล่มลายเซ็นใหม่
-                        </button>
-                        <button
-                          onClick={() => {
-                            fetchAndShowSignature();
-                            setShowSignatureMenu(false);
-                          }}
-                          className="flex items-center gap-2 w-full px-4 py-2 text-left hover:bg-gray-100"
-                        >
-                          <Signature size={16} /> ลายเซ็นล่า
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowSignatureDialog(true);
-                            setShowSignatureMenu(false);
-                          }}
-                          className="flex items-center gap-2 w-full px-4 py-2 text-left hover:bg-gray-100"
-                        >
-                          <Signature size={16} /> เลือกลายเซ็นจากรายการ
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  {showSignatureOnPdf && (
-                    <button
-                      onClick={() => setShowSignatureOnPdf(false)}
-                      className="flex items-center gap-1 px-3 py-1 bg-red-500 text-white rounded"
-                    >
-                      <X size={16} /> ลบลายเซ็น
-                    </button>
+                  {showSignatureMenu && (
+                    <div className="absolute top-full right-0 mt-1 bg-white shadow-lg rounded-md z-50 w-48 overflow-hidden">
+                      <button
+                        onClick={() => {
+                          setIsSignature(true);
+                          setShowSignatureMenu(false);
+                        }}
+                        className="flex items-center gap-2 w-full px-4 py-2 text-left hover:bg-gray-50 text-gray-700"
+                      >
+                        <Signature size={16} /> เลือกจากลายเซ็นใหม่
+                      </button>
+                      <button
+                        onClick={() => {
+                          fetchAndShowSignature();
+                          setShowSignatureMenu(false);
+                        }}
+                        className="flex items-center gap-2 w-full px-4 py-2 text-left hover:bg-gray-50 text-gray-700"
+                      >
+                        <Signature size={16} /> ใช้ลายเซ็นล่า
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowSignatureDialog(true);
+                          setShowSignatureMenu(false);
+                        }}
+                        className="flex items-center gap-2 w-full px-4 py-2 text-left hover:bg-gray-50 text-gray-700"
+                      >
+                        <Signature size={16} /> เลือกจากลายเซ็น
+                      </button>
+                    </div>
                   )}
                 </div>
+                
+                <button
+                  onClick={savePdfWithSignature}
+                  className="flex items-center gap-1 px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md shadow-sm transition-colors"
+                >
+                  <Save size={16} />
+                  <span className="hidden sm:inline">เซ็นเอกสาร</span>
+                </button>
+              </div>
+            </div>
+            
+            <TransformWrapper initialScale={1} minScale={0.5} maxScale={5} wheel={{ step: 0.1 }}>
+              {({ zoomIn, zoomOut, resetTransform }) => (
                 <div
-                  className="flex justify-center flex-col border border-t-transparent relative w-full"
-                  ref={containerRef}
+                  className="flex justify-center bg-gray-100 border-b relative"
                   onMouseDown={startDraggingSignature}
                   onMouseMove={handleDragSignature}
                   onMouseUp={stopDraggingSignature}
                   onMouseLeave={stopDraggingSignature}
                 >
-                  <TransformComponent wrapperClass="w-full">
-                    <canvas ref={canvasRef} />
+                  <TransformComponent wrapperClass="w-full py-4">
+                    <canvas ref={canvasRef} className="shadow-md max-w-full" />
                   </TransformComponent>
+                  
                   {showSignatureOnPdf && signatureImgUrl && (
                     <img
                       src={signatureImgUrl}
@@ -467,185 +657,220 @@ const UploadPdf: React.FC = () => {
                         width: '20%',
                         cursor: 'move',
                         zIndex: 10,
+                        filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))'
                       }}
                       onMouseDown={startDraggingSignature}
                     />
                   )}
-                  <button
-                    className="absolute -translate-y-1/2 bottom-1/2 left-0 z-50 bg-white/80 p-1 rounded-full shadow"
-                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                    disabled={currentPage === 1}
-                  >
-                    <ChevronLeft />
-                  </button>
-                  <button
-                    className="absolute right-0 -translate-y-1/2 bottom-1/2 z-50 bg-white/80 p-1 rounded-full shadow"
-                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                    disabled={currentPage === totalPages}
-                  >
-                    <ChevronRight />
-                  </button>
+                  
+                  {totalPages > 1 && (
+                    <>
+                      <button
+                        className="absolute left-2 top-1/2 -translate-y-1/2 z-10 bg-white/80 hover:bg-white p-2 rounded-full shadow text-gray-700 hover:text-blue-600 transition-colors"
+                        onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                        disabled={currentPage === 1}
+                      >
+                        <ChevronLeft size={20} />
+                      </button>
+                      <button
+                        className="absolute right-2 top-1/2 -translate-y-1/2 z-10 bg-white/80 hover:bg-white p-2 rounded-full shadow text-gray-700 hover:text-blue-600 transition-colors"
+                        onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                        disabled={currentPage === totalPages}
+                      >
+                        <ChevronRight size={20} />
+                      </button>
+                    </>
+                  )}
                 </div>
-              </>
-            )}
-          </TransformWrapper>
-        </div>
-      )}
-      {isSignature && (
-        <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-10"
-          onClick={() => setIsSignature(false)}
-        >
-          <div
-            className="bg-white p-4 rounded shadow-lg w-[90vw] max-w-sm"
-            onClick={e => e.stopPropagation()}
-          >
-            <h2 className="text-lg font-semibold mb-2">Signature Mode</h2>
-            <div className="flex border-b mb-4">
-              <button
-                className={`flex-1 px-4 py-2 ${!isUploadTab ? 'border-b-2 border-blue-600 font-semibold' : 'text-gray-500'
-                  }`}
-                onClick={() => setIsUploadTab(false)}
-              >
-                เซ็น
-              </button>
-              <button
-                className={`flex-1 px-4 py-2 ${isUploadTab ? 'border-b-2 border-blue-600 font-semibold' : 'text-gray-500'
-                  }`}
-                onClick={() => setIsUploadTab(true)}
-              >
-                ปโหลด
-              </button>
-            </div>
-            {!isUploadTab ? (
-              <>
-                <SignatureCanvas
-                  ref={signatureRef}
-                  penColor="black"
-                  canvasProps={{
-                    width: 300,
-                    height: 100,
-                    className: 'border border-gray-300 rounded w-full',
-                  }}
-                />
-                <div className="flex justify-between mt-4">
-                  <button
-                    className="bg-gray-400 text-white px-4 py-2 rounded"
-                    onClick={() => signatureRef.current?.clear()}
-                  >
-                    Clear
-                  </button>
-                  <button
-                    className="bg-blue-600 text-white px-4 py-2 rounded"
-                    onClick={handlePlaceSignature}
-                  >
-                    Use Signature
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="text-sm text-gray-600 mb-4">
-                  Upload an image to use as your signature.
-                </p>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={e => {
-                    const file = e.target.files?.[0]
-                    if (file) {
-                      const reader = new FileReader()
-                      reader.onload = ev => {
-                        if (ev.target?.result) {
-                          setSignatureImgUrl(ev.target.result as string)
-                          setShowSignatureOnPdf(true)
-                          setIsSignature(false)
-                        }
-                      }
-                      reader.readAsDataURL(file)
-                    }
-                  }}
-                  className="mb-4"
-                />
-              </>
-            )}
+              )}
+            </TransformWrapper>
+          </div>
+          
+          <div className="flex justify-center mt-6">
+            <button
+              onClick={() => {
+                setShowSignatureDialog(true);
+                setShowSignatureMenu(false);
+              }}
+              className="flex items-center justify-center gap-1 px-6 py-3 text-white font-medium rounded-lg shadow-md transition-colors"
+              style={{
+                backgroundColor: '#4CCAB4',
+                width: '352px',
+                height: '42px',
+              }}
+            >
+              <Signature size={18} className="mr-2" />
+              <span className="text-base">เซ็นเอกสาร</span>
+            </button>
           </div>
         </div>
       )}
+      
+      {/* Modal ลายเซ็น */}
+      {isSignature && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+          onClick={() => setIsSignature(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-[90vw] max-w-md overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="p-4 border-b">
+              <h2 className="text-lg font-semibold text-gray-800">ลายเซ็น</h2>
+            </div>
+            
+            <div className="flex border-b">
+              <button
+                className={`flex-1 px-4 py-3 ${!isUploadTab ? 'border-b-2 border-blue-600 font-medium text-blue-600' : 'text-gray-600'}`}
+                onClick={() => setIsUploadTab(false)}
+              >
+                วาดลายเซ็น
+              </button>
+              <button
+                className={`flex-1 px-4 py-3 ${isUploadTab ? 'border-b-2 border-blue-600 font-medium text-blue-600' : 'text-gray-600'}`}
+                onClick={() => setIsUploadTab(true)}
+              >
+                ปโหลดภาพ
+              </button>
+            </div>
+            
+            <div className="p-4">
+              {!isUploadTab ? (
+                <>
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-2 mb-4">
+                    <SignatureCanvas
+                      ref={signatureRef}
+                      penColor="black"
+                      canvasProps={{
+                        width: 300,
+                        height: 150,
+                        className: 'w-full rounded bg-white',
+                      }}
+                    />
+                  </div>
+                  <div className="flex justify-between">
+                    <button
+                      className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded transition-colors"
+                      onClick={() => signatureRef.current?.clear()}
+                    >
+                      ล้าง
+                    </button>
+                    <button
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+                      onClick={handlePlaceSignature}
+                    >
+                      ใช้ลายเซ็น
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-gray-600 mb-4">
+                    3ปโหลด3ภาพลายเซ็น3
+                  </p>
+                  <label className="block mb-4">
+                    <span className="sr-only">3กรูปภาพ</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={e => {
+                        const file = e.target.files?.[0]
+                        if (file) {
+                          const reader = new FileReader()
+                          reader.onload = ev => {
+                            if (ev.target?.result) {
+                              setSignatureImgUrl(ev.target.result as string)
+                              setShowSignatureOnPdf(true)
+                              setIsSignature(false)
+                            }
+                          }
+                          reader.readAsDataURL(file)
+                        }
+                      }}
+                      className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                    />
+                  </label>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      
       {/* Dialog เลือกลายเซ็น */}
       {showSignatureDialog && (
         <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-10"
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
           onClick={() => setShowSignatureDialog(false)}
         >
           <div
-            className="bg-white p-4 rounded shadow-lg w-[90vw] max-w-md"
+            className="bg-white rounded-lg shadow-xl w-[90vw] max-w-md overflow-hidden"
             onClick={e => e.stopPropagation()}
           >
-            <h2 className="text-lg font-semibold mb-2">ลายเซ็น</h2>
+            <div className="p-4 border-b flex justify-between items-center">
+              <h2 className="text-lg font-semibold text-gray-800">3ลายเซ็น</h2>
+              <button 
+                onClick={() => setShowSignatureDialog(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
             {signatureOptions.length > 0 ? (
-              <div className="max-h-[50vh] overflow-y-auto">
-                <div className="flex flex-wrap">
+              <div className="max-h-[50vh] overflow-y-auto p-4">
+                <div className="grid grid-cols-2 gap-3">
                   {signatureOptions.map((url, index) => (
                     <div
                       key={index}
-                      className="w-1/4 p-1 cursor-pointer hover:bg-gray-100"
-                      onClick={() => selectSignature(url)}
+                      className="border border-gray-200 rounded-lg p-2 cursor-pointer hover:border-blue-500 transition-colors"
+                      onClick={() => {
+                        console.log('Selected signature URL:', url);
+                        console.log('Current signatureImgUrl:', setSignatureImgUrl(url));
+                        console.log('Current signaturePosition:', setShowSignatureDialog(false));
+                        console.log('Current signaturePosition:', setShowSignatureOnPdf(true));
+                        setSignatureImgUrl(url);
+                        setShowSignatureOnPdf(true);
+                        setShowSignatureDialog(false);
+                      }}
                     >
-                      <img src={url} alt={`ลายเซ็น ${index + 1}`} className="w-full" />
+                      <img src={url} alt={`ลายเซ็น ${index + 1}`} className="w-full h-auto" />
                     </div>
                   ))}
                 </div>
               </div>
             ) : (
-              <div>
-                <p>
-                  ไม่พบลายเซ็นในฐานข้อมูล{" "}
-                  <a
-                    href="http://devdev.prachakij.com/paper/SIGN/login/login.php"
-                    target="_blank"
-                    className="text-blue-500 underline"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      window.open("http://devdev.prachakij.com/paper/SIGN/login/login.php", "_blank");
-                    }}
-                  >
-                    ลายเซ็น
-                  </a>
+              <div className="p-6 text-center">
+                <p className="text-gray-600 mb-4">
+                  ไม่พบลายเซ็นในฐานข้อมูล
                 </p>
+                <a
+                  href="http://devdev.prachakij.com/paper/SIGN/login/login.php"
+                  target="_blank"
+                  className="inline-block px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.open("http://devdev.prachakij.com/paper/SIGN/login/login.php", "_blank");
+                  }}
+                >
+                  ไป3ระบบลายเซ็น
+                </a>
               </div>
             )}
-            <div className="flex justify-end mt-4">
-              <button
-                className="bg-gray-400 text-white px-4 py-2 rounded"
-                onClick={() => setShowSignatureDialog(false)}
-              >
-                ยก
-              </button>
-            </div>
           </div>
         </div>
       )}
-      <div className="flex justify-center mt-4">
-        <button
-          onClick={() => {
-            setShowSignatureDialog(true);
-            setShowSignatureMenu(false);
-          }}
-          className="flex items-center justify-center gap-1 px-3 py-1 text-white"
-          style={{
-            backgroundColor: '#4CCAB499',
-            width: '352px',
-            height: '42px',
-            borderRadius: '10px',
-
-          }}
-        >
-          <h5 className="text-base font-medium text-gray-900 text-center font-sukhumvit-set text-[16px]">เซ็นเอกสาร</h5>
-        </button>
-      </div>
     </div>
   )
 }
 
 export default UploadPdf
+function setShowSignatureOnPdf(arg0: boolean) {
+  throw new Error('Function not implemented.')
+}
+
+function setTotalPages(numPages: number) {
+  throw new Error('Function not implemented.')
+}
+

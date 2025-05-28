@@ -1,18 +1,24 @@
 export const uploadToS3 = async (
-  file: Blob | Buffer | ArrayBuffer,
-  fileName: string,
-  contentType: string
+  file: Blob | Buffer | ArrayBuffer | string,
+  fileName: string = '',
+  contentType: string = 'image/jpeg',
+  userId: string = 'web_user'
 ): Promise<string> => {
   try {
-    // แปลงไฟล์เป็น Base64
-    const arrayBuffer = file instanceof ArrayBuffer ? file : await file.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    const base64Image = btoa(
-      bytes.reduce((data, byte) => data + String.fromCharCode(byte), '')
-    );
+    // แปลงไฟล์เป็น Base64 ถ้าไม่ใช่ string
+    let base64Image = '';
     
-    // <lemma ID <lemma้ใช้จาก localStorage ถ้า<lemma
-    const userId = localStorage.getItem('id') || 'web_user';
+    if (typeof file === 'string') {
+      // ถ้าเป็น base64 string อยู่แล้ว
+      base64Image = file;
+    } else {
+      // แปลงไฟล์เป็น Base64
+      const arrayBuffer = file instanceof ArrayBuffer ? file : await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      base64Image = btoa(
+        bytes.reduce((data, byte) => data + String.fromCharCode(byte), '')
+      );
+    }
     
     // URL ของ API Gateway
     const url = 'https://mhmo3nnbr5.execute-api.ap-southeast-1.amazonaws.com/latest/img_Signature_NDA';

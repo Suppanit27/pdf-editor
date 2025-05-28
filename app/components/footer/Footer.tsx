@@ -6,8 +6,8 @@ const Footer: React.FC = () => {
       <div className=" text-white py-4">
         <div className="container mx-auto text-center">
           <p>
-            &copy; {new Date().getFullYear()} Your Company Name. All rights
-            reserved.
+            {/* &copy; {new Date().getFullYear()} Your Company Name. All rights
+            reserved. */}
           </p>
         </div>
       </div>
