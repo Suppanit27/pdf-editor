@@ -1,12 +1,12 @@
-import React, { Fragment } from 'react';
-import UploadPdf from './components/pdf/UploadPdf';
+import React from 'react';
+import ClientWrapper from './components/ClientWrapper';
+import '../utils/domMatrixMock';
 
-const App: React.FC = () => {
-    return (
-      <Fragment>
-        <UploadPdf />
-      </Fragment>
-    );
-};
+// สร้าง static params  static export
+export function generateStaticParams() {
+  return [{}]; // สร้างเฉพาะหน้าแรก
+}
 
-export default App;
+export default function Page() {
+  return <ClientWrapper />;
+}

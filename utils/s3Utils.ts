@@ -7,22 +7,34 @@ export const uploadToS3 = async (
   try {
     // แปลงไฟล์เป็น Base64 ถ้าไม่ใช่ string
     let base64Image = '';
-    
+
     if (typeof file === 'string') {
-      // ถ้าเป็น base64 string อยู่แล้ว
       base64Image = file;
     } else {
-      // แปลงไฟล์เป็น Base64
-      const arrayBuffer = file instanceof ArrayBuffer ? file : await file.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
+      let bytes: Uint8Array;
+
+      if (file instanceof ArrayBuffer) {
+        bytes = new Uint8Array(file);
+      } else if (file instanceof Blob) {
+        const arrayBuffer = await file.arrayBuffer();
+        bytes = new Uint8Array(arrayBuffer);
+      } else if (Buffer.isBuffer(file)) {
+        // ใช้ Buffer เป็น Uint8Array ได้โดยตรง
+        bytes = new Uint8Array(file);
+      } else {
+        throw new Error('Unsupported file type for uploadToS3');
+      }
+
       base64Image = btoa(
         bytes.reduce((data, byte) => data + String.fromCharCode(byte), '')
       );
     }
-    
+
+
+
     // URL ของ API Gateway
     const url = 'https://mhmo3nnbr5.execute-api.ap-southeast-1.amazonaws.com/latest/img_Signature_NDA';
-    
+
     // สร้าง payload
     const payload = {
       "name": "MappMS",
@@ -31,7 +43,7 @@ export const uploadToS3 = async (
       "folder": "MappMS/img_pdf_presign",
       "image": base64Image
     };
-    
+
     // ส่งข้อมูล<lemma API Gateway
     const response = await fetch(url, {
       method: 'POST',
@@ -40,9 +52,9 @@ export const uploadToS3 = async (
       },
       body: JSON.stringify(payload),
     });
-    
+
     const jsonResponse = await response.json();
-    
+
     if (jsonResponse.statusCode === 200) {
       console.log("linkPDFS3:", jsonResponse.result.url.Location);
       // ส่ง<lemmaค่า URL ของไฟล์

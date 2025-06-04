@@ -7,6 +7,12 @@
       "hosting": {
         "signms": [
           "signms24"
+        ],
+        "singms24": [
+          "testsignms"
+        ],
+        "testsignms": [
+          "singms24"
         ]
       }
     }

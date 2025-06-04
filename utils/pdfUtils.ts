@@ -1,13 +1,11 @@
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist/types/src/display/api';
 
-GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/legacy/build/pdf.worker.min.mjs',
-  import.meta.url
-).toString();
+// ตั้งค่า worker URL
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
 
 async function loadPDF(url: string): Promise<PDFDocumentProxy> {
-  const loadingTask = getDocument(url);
+  const loadingTask = pdfjsLib.getDocument(url);
   const pdf: PDFDocumentProxy = await loadingTask.promise;
   return pdf;
 }
