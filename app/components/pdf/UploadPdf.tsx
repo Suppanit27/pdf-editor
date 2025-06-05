@@ -32,6 +32,8 @@ const UploadPdf = () => {
   const lastRenderRef = useRef<{ pdf: any, page: number } | null>(null);
   const [originalPdfBytes, setOriginalPdfBytes] = useState<ArrayBuffer | null>(null);
   const [savedPdfUrl, setSavedPdfUrl] = useState<string | null>(null);
+  const [pdfLink, setPdfLink] = useState<string | null>(null);
+  const [showCopiedTooltip, setShowCopiedTooltip] = useState(false);
 
   useEffect(() => {
     // อ่าน PDF URL และ userId จาก query parameters
@@ -296,6 +298,20 @@ const UploadPdf = () => {
     };
   }, []);
 
+  const copyPdfLink = () => {
+    if (pdfLink) {
+      navigator.clipboard.writeText(pdfLink)
+        .then(() => {
+          setShowCopiedTooltip(true);
+          setTimeout(() => setShowCopiedTooltip(false), 2000);
+        })
+        .catch(err => {
+          console.error('ไม่สามารถลอกลิงค์ได้:', err);
+          setError('ไม่สามารถลอกลิงค์ได้');
+        });
+    }
+  };
+
   const savePdfWithSignature = async () => {
     if (!pdfDocument || !showSignatureOnPdf || !signatureImgUrl || !originalPdfBytes) {
       setError('เอกสารและลายเซ็นให้พร้อมก่อน');
@@ -345,15 +361,39 @@ const UploadPdf = () => {
       // บันทึก PDF
       const pdfBytes = await pdfDoc.save();
       
-      // สร้าง URL สำหรับการดาวน์โหลด
+      // สร้าง Blob
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
       
-      // เก็บ URL ไว้ใช้ในการดาวน์โหลด
-      setSavedPdfUrl(url);
+      // สร้าง URL ดาวน์โหลดในเครื่อง
+      const localUrl = URL.createObjectURL(blob);
+      setSavedPdfUrl(localUrl);
       
-      // ดาวน์โหลดไฟล์
-      saveAs(blob, 'document-with-signature.pdf');
+      // ใช้ API ของเซิร์ฟเวอร์ในการอัปโหลดไฟล์
+      try {
+        // แปลง Blob เป็น File
+        const file = new File([blob], "document-with-signature.pdf", { type: "application/pdf" });
+        SaveAs(blob, "document-with-signature.pdf");
+        // สร้าง FormData
+        const formData = new FormData();
+        formData.append("file", file);
+        
+        // ส่งไฟล์ไปยัง API
+        const response = await fetch("/api/upload-pdf", {
+          method: "POST",
+          body: formData,
+        });
+        
+        if (!response.ok) {
+          throw new Error("ไม่สามารถอัปโหลดไฟล์ได้");
+        }
+        
+        const data = await response.json();
+        setPdfLink(data.fileUrl);
+      } catch (error) {
+        console.error("Error uploading file:", error);
+        // ถ้าไม่สามารถอัปโหลดได้ ให้ใช้ลิงค์ local แทน
+        setPdfLink(localUrl);
+      }
       
       setIsLoading(false);
     } catch (error: any) {
@@ -384,44 +424,54 @@ const UploadPdf = () => {
       ) : (
         <div className="w-full max-w-4xl">
           {/* ส่วนด้านบน */}
-            <div className="flex justify-end items-center mb-4"> 
+            <div className="flex justify-end items-center mb-4">
               <div className="flex space-x-2">
                 {showSignatureOnPdf && (
-              <button
-                onClick={() => {
-                  setShowSignatureOnPdf(false);
-                  setSignatureImgUrl('');
-                }}
-                disabled={isRendering}
-                className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:bg-gray-300 flex items-center justify-center space-x-2"
-              >
-                <Trash2 size={16} />
-                <span>ลบลายเซ็น</span>
-              </button>
-            )}
-              {showSignatureOnPdf && (
-                <button
-                  onClick={savePdfWithSignature}
-                  disabled={isRendering || !showSignatureOnPdf}
-                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 flex items-center"
-                >
-                  <Save size={18} className="mr-1" />
-                  <span>บันทึกเอกสาร</span>
-                </button>
-              )}
-              
-              {savedPdfUrl && (
-                <a
-                  href={savedPdfUrl}
-                  download="document-with-signature.pdf"
-                  className="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 flex items-center"
-                >
-                  <Download size={18} className="mr-1" />
-                  <span>ดาวน์โหลด</span>
-                </a>
-              )}
+                  <button
+                    onClick={() => {
+                      setShowSignatureOnPdf(false);
+                      setSignatureImgUrl('');
+                    }}
+                    disabled={isRendering}
+                    className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:bg-gray-300 flex items-center justify-center space-x-2"
+                  >
+                    <Trash2 size={16} />
+                    <span>ลบลายเซ็น</span>
+                  </button>
+                )}
+                
+                {showSignatureOnPdf && !pdfLink && (
+                  <button
+                    onClick={savePdfWithSignature}
+                    disabled={isRendering || !showSignatureOnPdf}
+                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 flex items-center"
+                  >
+                    <Save size={18} className="mr-1" />
+                    <span>บันทึก PDF</span>
+                  </button>
+                )}
+                
+                {pdfLink && (
+                  <div className="relative">
+                    <button
+                      onClick={copyPdfLink}
+                      className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 flex items-center"
+                    >
+                      <Save size={18} className="mr-1" />
+                      <span>ลอกลิงค์ PDF</span>
+                    </button>
+                    
+                    {showCopiedTooltip && (
+                      <div className="absolute right-0 mt-2 px-3 py-2 bg-gray-800 text-white text-sm rounded shadow-lg">
+                        ลอกลิงค์แล้ว!
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+
+              </div>
             </div>
-          </div>
           
           {/* PDF display content */}
           <div ref={containerRef} className="relative bg-white rounded-lg shadow-lg p-4">
