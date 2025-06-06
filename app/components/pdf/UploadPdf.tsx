@@ -19,6 +19,8 @@ import { saveAs } from 'file-saver'
 import { loadPdfDocument, renderPdfPage, cancelAllRenders } from '../../utils/pdfUtils'
 import { loadRDSSignAPI } from '@/lib/signature'
 import { useSearchParams } from 'next/navigation'
+import { uploadPDFToS3 } from '@/lib/signature'
+
 
 const UploadPdf = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -363,83 +365,85 @@ const copyPdfLink = () => {
 };
 
 
-  const savePdfWithSignature = async () => {
+const savePdfWithSignature = async () => {
   if (!pdfDocument || !showSignatureOnPdf || !signatureImgUrl || !originalPdfBytes) {
-    setError('เอกสารและลายเซ็นให้พร้อมก่อน')
-    return
+    setError('เอกสารและลายเซ็นให้พร้อมก่อน');
+    return;
   }
 
   try {
-    setIsLoading(true)
-    const pdfDoc = await PDFDocument.load(originalPdfBytes)
+    setIsLoading(true);
+    const pdfDoc = await PDFDocument.load(originalPdfBytes);
 
-    let signatureImage
+    let signatureImage;
 
     if (signatureImgUrl.startsWith('http')) {
-      // กรณีเป็น URL: แปลงภาพเป็น ArrayBuffer
-      const response = await fetch(signatureImgUrl)
-      if (!response.ok) throw new Error('โหลดภาพลายเซ็นไม่สำเร็จ')
-      const imageBytes = await response.arrayBuffer()
-      signatureImage = await pdfDoc.embedPng(imageBytes)
+      const response = await fetch(signatureImgUrl);
+      if (!response.ok) throw new Error('โหลดภาพลายเซ็นไม่สำเร็จ');
+      const imageBytes = await response.arrayBuffer();
+      signatureImage = await pdfDoc.embedPng(imageBytes);
     } else {
-      // กรณีเป็น Base64 หรือ DataURL (จาก canvas)
-      signatureImage = await pdfDoc.embedPng(signatureImgUrl)
+      signatureImage = await pdfDoc.embedPng(signatureImgUrl);
     }
 
-    const pages = pdfDoc.getPages()
-    const page = pages[currentPage - 1]
+    const pages = pdfDoc.getPages();
+    const page = pages[currentPage - 1];
 
-    const pdfWidth = page.getWidth()
-    const pdfHeight = page.getHeight()
-    const canvasWidth = currentViewport?.width || 800
-    const canvasHeight = currentViewport?.height || 600
+    const pdfWidth = page.getWidth();
+    const pdfHeight = page.getHeight();
+    const canvasWidth = currentViewport?.width || 800;
+    const canvasHeight = currentViewport?.height || 600;
 
-    const scaleX = pdfWidth / canvasWidth
-    const scaleY = pdfHeight / canvasHeight
+    const scaleX = pdfWidth / canvasWidth;
+    const scaleY = pdfHeight / canvasHeight;
 
-    const signatureX = signaturePosition.x * scaleX
-    const signatureY = pdfHeight - signaturePosition.y * scaleY - signatureSize.height * scaleY
-    const signatureWidth = signatureSize.width * scaleX
-    const signatureHeight = signatureSize.height * scaleY
+    const signatureX = signaturePosition.x * scaleX;
+    const signatureY = pdfHeight - signaturePosition.y * scaleY - signatureSize.height * scaleY;
+    const signatureWidth = signatureSize.width * scaleX;
+    const signatureHeight = signatureSize.height * scaleY;
 
     page.drawImage(signatureImage, {
       x: signatureX,
       y: signatureY,
       width: signatureWidth,
       height: signatureHeight,
-    })
+    });
 
-    const pdfBytes = await pdfDoc.save()
-    const blob = new Blob([pdfBytes], { type: 'application/pdf' })
-    const localUrl = URL.createObjectURL(blob)
-    setSavedPdfUrl(localUrl)
+    // บันทึก PDF เป็น bytes
+    const pdfBytes = await pdfDoc.save();
 
-    try {
-      const file = new File([blob], 'document-with-signature.pdf', { type: 'application/pdf' })
-      saveAs(blob, 'document-with-signature.pdf') // แก้ SaveAs → saveAs (case-sensitive)
-      const formData = new FormData()
-      formData.append('file', file)
+    // แปลง pdfBytes เป็น base64 string
+    const base64PDF = `data:application/pdf;base64,${Buffer.from(pdfBytes).toString('base64')}`;
 
-      const response = await fetch('/api/upload-pdf', {
-        method: 'POST',
-        body: formData,
-      })
+    // --- เรียกอัปโหลดไป S3 ---
+    const s3Link = await uploadPDFToS3(base64PDF);
+    if (!s3Link) {
+      setError('อัปโหลดไฟล์ไป S3 ไม่สำเร็จ');
+      setIsLoading(false);
+      return;
+    }
+    setPdfLink(s3Link); // แสดงลิงก์ PDF
+    console.log('s3Link:', s3Link);
 
-      if (!response.ok) throw new Error('ไม่สามารถอัปโหลดไฟล์ได้')
-      const data = await response.json()
-      setPdfLink(data.fileUrl)
-    } catch (error) {
-      console.error('Error uploading file:', error)
-      setPdfLink(localUrl)
+    // --- เรียกบันทึกลิงก์ใน RDS ---
+    const userId = localStorage.getItem('id') || '';
+    const isSaved = await savePDFtoRDS(userId, s3Link, dataPDF);
+    if (!isSaved) {
+      setError('บันทึกข้อมูลในระบบไม่สำเร็จ');
+    } else {
+      console.log('บันทึกข้อมูลในระบบสำเร็จ');
     }
 
-    setIsLoading(false)
+    setIsLoading(false);
   } catch (error: any) {
-    console.error('Error saving PDF:', error)
-    setError(`ไม่สามารถบันทึก PDF ได้: ${error.message}`)
-    setIsLoading(false)
+    console.error('Error saving PDF:', error);
+    setError(`ไม่สามารถบันทึก PDF ได้: ${error.message}`);
+    setIsLoading(false);
   }
-}
+};
+
+
+
 
 
   const handlePlaceImageSignature = (url: string) => {
