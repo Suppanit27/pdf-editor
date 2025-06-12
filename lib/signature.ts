@@ -62,17 +62,36 @@ interface SavePDFPayload {
   dataPDF: any; // ปรับตามโครงสร้างข้อมูลจริงของคุณ
   system?: string;
 }
-export const savePDFtoRDS = async (payload: SavePDFPayload): Promise<boolean> => {
+
+export const savePDFtoRDS = async (id: string, linkPDF: string, dataPDF: any): Promise<boolean> => {
   try {
     const requestBody = {
-      menu: 'saveSignRDS',
-      id: payload.id,
-      linkPDF: payload.linkPDF,
-      dataPDF: payload.dataPDF,
-      system: payload.system || 'App_MS24',
+      menu: 'saveSignRDSweb',
+      id,
+      linkPDF,
+      member_id_approve: dataPDF[0]?.member_id_approve,
+      member_id_approve2: dataPDF[0]?.member_id_approve2,
+      member_id_approve3: dataPDF[0]?.member_id_approve3,
+      member_id_approve4: dataPDF[0]?.member_id_approve4,
+      member_id_approve5: dataPDF[0]?.member_id_approve5,
+      member_status_approve: dataPDF[0]?.member_status_approve,
+      member_status_approve2: dataPDF[0]?.member_status_approve2,
+      member_status_approve3: dataPDF[0]?.member_status_approve3,
+      member_status_approve4: dataPDF[0]?.member_status_approve4,
+      member_status_approve5: dataPDF[0]?.member_status_approve5,
+      refer_id: dataPDF[0]?.refer_id,
+      running: dataPDF[0]?.running,
+      system: 'App_MS24',
     };
+    console.log('requestBody:', requestBody);
+    console.log('dataPDF:', dataPDF[0]?.member_id_approve,);
+
+//     dataPDF.forEach((item, index) => {
+//   console.log(`Item ${index} running:`, item.running);
+// });
     const response = await axios.post(API_URL, requestBody);
 
+    console.log('response:', response.data);
     if (response.data.statusCode?.toString() === '200') {
       console.log('Save success!');
       return true;
@@ -85,3 +104,34 @@ export const savePDFtoRDS = async (payload: SavePDFPayload): Promise<boolean> =>
     return false;
   }
 };
+
+export const loadNitrosign = async (running: string): Promise<Uint8Array | null> => {
+  try {
+    const requestBody = {
+      menu: 'searchNitrosignrunning',
+      running,
+    };
+    const response = await axios.post(API_URL, requestBody);
+    console.log('response:', response.data);
+    if (response.data.statusCode?.toString() === '200') {
+      console.log('Load success!');
+      const dataPDF = response.data.result;
+      return dataPDF; // Return the actual PDF data
+    } else {
+      console.warn('Load failed!');
+      return null;
+    }
+  } catch (error) {
+    console.error('Error in loadNitrosign:', error);
+    return null;
+  }
+};
+
+async function fetchSignatureAsBytes(url: string): Promise<Uint8Array> {
+  const response = await fetch(url, { mode: 'cors' });
+  if (!response.ok) {
+    throw new Error(`โหลดลายเซ็นไม่สำเร็จ: ${response.status}`);
+  }
+  const buffer = await response.arrayBuffer();
+  return new Uint8Array(buffer);
+}

@@ -20,6 +20,8 @@ import { loadPdfDocument, renderPdfPage, cancelAllRenders } from '../../utils/pd
 import { loadRDSSignAPI } from '@/lib/signature'
 import { useSearchParams } from 'next/navigation'
 import { uploadPDFToS3 } from '@/lib/signature'
+import { savePDFtoRDS } from '@/lib/signature'
+import { loadNitrosign } from '@/lib/signature'
 
 
 const UploadPdf = () => {
@@ -40,6 +42,8 @@ const UploadPdf = () => {
   const [pdfUrl, setPdfUrl] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [succeed, setSucceed] = useState<string | null>(null)
+
   const [currentViewport, setCurrentViewport] = useState<any>(null)
   const [isRendering, setIsRendering] = useState(false)
   const lastRenderRef = useRef<{ pdf: any; page: number } | null>(null)
@@ -51,6 +55,10 @@ const UploadPdf = () => {
   const [isUploadTab, setIsUploadTab] = useState(false)
   const searchParams = useSearchParams()
   const findId = searchParams.get('userId')
+  const runningId = searchParams.get('running')
+  const [pdfData, setPdfData] = useState<Uint8Array | null>(null);
+  const [bytes, setBytes] = useState<Uint8Array | null>(null);
+
 
   useEffect(() => {
     loadRDSSignAPI(findId)
@@ -66,12 +74,27 @@ const UploadPdf = () => {
         console.error('Error loading signatures from RDS:', error)
         setError('ไม่สามารถโหลดลายเซ็นจาก RDS ได้')
       })
+    loadNitrosign(runningId)
+      .then(data => {
+        if (data.length > 0) {
+          setPdfData(data)
+          console.log('เอกสารที่โหลดจาก RDS:', data)
+        } else {
+          console.warn('ไม่พบเอกสารใน RDS')
+        }
+      })
+      .catch(error => {
+        console.error('Error loading signatures from RDS:', error)
+        setError('ไม่สามารถโหลดเอกสารจาก RDS ได้')
+      })
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search)
       const pdfUrlParam = urlParams.get('pdfUrl')
       const userIdParam = urlParams.get('userId')
+      const runningIdParam = urlParams.get('running')
       console.log('userIdParam:', userIdParam)
       console.log('pdfUrlParam:', pdfUrlParam)
+      console.log('runningIdParam:', runningIdParam)
 
       if (userIdParam) {
         localStorage.setItem('id', userIdParam)
@@ -87,6 +110,7 @@ const UploadPdf = () => {
       }
     }
   }, [])
+
 
   const loadPdfFromUrl = async (url: string) => {
     setIsLoading(true)
@@ -335,115 +359,239 @@ const UploadPdf = () => {
     }
   }, [])
 
-const copyPdfLink = () => {
-  if (pdfLink) {
-    navigator.clipboard
-      .writeText(pdfLink)
-      .then(async () => {
-        setShowCopiedTooltip(true);
-        setTimeout(() => setShowCopiedTooltip(false), 2000);
-        console.log('ลอกลิงค์สำเร็จ');
-        console.log('pdfLink:', pdfLink);
-        console.log('userId:', userId);
-        console.log('dataPDF:', dataPDF);
-        // เรียก savePDFtoRDS หลังคัดลอกสำเร็จ
-        const success = await savePDFtoRDS({
-          id: userId,               // <-- เปลี่ยนเป็นค่าจริงที่คุณมี
-          linkPDF: pdfLink,
-          dataPDF: dataPDF,         // <-- ใส่ dataPDF ที่คุณมี
+  const copyPdfLink = () => {
+    if (pdfLink) {
+      navigator.clipboard
+        .writeText(pdfLink)
+        .then(async () => {
+          setShowCopiedTooltip(true);
+          setTimeout(() => setShowCopiedTooltip(false), 2000);
+          console.log('ลอกลิงค์สำเร็จ');
+          console.log('pdfLink:', pdfLink);
+          console.log('userId:', userId);
+          console.log('dataPDF:', dataPDF);
+          // เรียก savePDFtoRDS หลังคัดลอกสำเร็จ
+          const success = await savePDFtoRDS({
+            id: userId,               // <-- เปลี่ยนเป็นค่าจริงที่คุณมี
+            linkPDF: pdfLink,
+            dataPDF: dataPDF[0],         // <-- ใส่ dataPDF ที่คุณมี
+          });
+
+          if (!success) {
+            setError('บันทึกลิงก์ไม่สำเร็จ');
+          }
+        })
+        .catch(err => {
+          console.error('ไม่สามารถลอกลิงค์ได้:', err);
+          setError('ไม่สามารถลอกลิงค์ได้');
         });
-
-        if (!success) {
-          setError('บันทึกลิงก์ไม่สำเร็จ');
-        }
-      })
-      .catch(err => {
-        console.error('ไม่สามารถลอกลิงค์ได้:', err);
-        setError('ไม่สามารถลอกลิงค์ได้');
-      });
-  }
-};
-
-
-const savePdfWithSignature = async () => {
-  if (!pdfDocument || !showSignatureOnPdf || !signatureImgUrl || !originalPdfBytes) {
-    setError('เอกสารและลายเซ็นให้พร้อมก่อน');
-    return;
-  }
-
-  try {
-    setIsLoading(true);
-    const pdfDoc = await PDFDocument.load(originalPdfBytes);
-
-    let signatureImage;
-
-    if (signatureImgUrl.startsWith('http')) {
-      const response = await fetch(signatureImgUrl);
-      if (!response.ok) throw new Error('โหลดภาพลายเซ็นไม่สำเร็จ');
-      const imageBytes = await response.arrayBuffer();
-      signatureImage = await pdfDoc.embedPng(imageBytes);
-    } else {
-      signatureImage = await pdfDoc.embedPng(signatureImgUrl);
     }
+  };
 
-    const pages = pdfDoc.getPages();
-    const page = pages[currentPage - 1];
 
-    const pdfWidth = page.getWidth();
-    const pdfHeight = page.getHeight();
-    const canvasWidth = currentViewport?.width || 800;
-    const canvasHeight = currentViewport?.height || 600;
-
-    const scaleX = pdfWidth / canvasWidth;
-    const scaleY = pdfHeight / canvasHeight;
-
-    const signatureX = signaturePosition.x * scaleX;
-    const signatureY = pdfHeight - signaturePosition.y * scaleY - signatureSize.height * scaleY;
-    const signatureWidth = signatureSize.width * scaleX;
-    const signatureHeight = signatureSize.height * scaleY;
-
-    page.drawImage(signatureImage, {
-      x: signatureX,
-      y: signatureY,
-      width: signatureWidth,
-      height: signatureHeight,
-    });
-
-    // บันทึก PDF เป็น bytes
-    const pdfBytes = await pdfDoc.save();
-
-    // แปลง pdfBytes เป็น base64 string
-    const base64PDF = `data:application/pdf;base64,${Buffer.from(pdfBytes).toString('base64')}`;
-
-    // --- เรียกอัปโหลดไป S3 ---
-    const s3Link = await uploadPDFToS3(base64PDF);
-    if (!s3Link) {
-      setError('อัปโหลดไฟล์ไป S3 ไม่สำเร็จ');
-      setIsLoading(false);
+  const savePdfWithSignature = async () => {
+    if (!pdfDocument || !showSignatureOnPdf || !signatureImgUrl || !originalPdfBytes) {
+      setError('เอกสารและลายเซ็นให้พร้อมก่อน');
       return;
     }
-    setPdfLink(s3Link); // แสดงลิงก์ PDF
-    console.log('s3Link:', s3Link);
 
-    // --- เรียกบันทึกลิงก์ใน RDS ---
-    const userId = localStorage.getItem('id') || '';
-    const isSaved = await savePDFtoRDS(userId, s3Link, dataPDF);
-    if (!isSaved) {
-      setError('บันทึกข้อมูลในระบบไม่สำเร็จ');
-    } else {
-      console.log('บันทึกข้อมูลในระบบสำเร็จ');
+    try {
+      setIsLoading(true);
+      const pdfDoc = await PDFDocument.load(originalPdfBytes);
+
+      let signatureImage;
+      console.log("signatureImage:", signatureImage);
+
+      console.log(signatureImgUrl.startsWith('http'));
+
+      if (signatureImgUrl.startsWith('http')) {
+        const response = await fetch(signatureImgUrl, { method: 'GET', mode: 'cors', cache: 'no-cache' });
+        const arrayBuffer = await response.arrayBuffer();
+        console.log("arrayBuffer:", arrayBuffer);
+
+        const signatureBytes = new Uint8Array(arrayBuffer);
+        console.log("signatureBytes:", signatureBytes);
+
+        signatureImage = await pdfDoc.embedPng(signatureBytes); // ✅ ใช้งานตรงนี้ได้เลย
+        console.log("signatureImage:", signatureImage);
+      } else {
+
+        signatureImage = await pdfDoc.embedPng(signatureImgUrl);
+        console.log("signatureImage:", signatureImage);
+
+      }
+
+      const pages = pdfDoc.getPages();
+      const page = pages[currentPage - 1];
+
+      const pdfWidth = page.getWidth();
+      const pdfHeight = page.getHeight();
+      const canvasWidth = currentViewport?.width || 800;
+      const canvasHeight = currentViewport?.height || 600;
+
+      const scaleX = pdfWidth / canvasWidth;
+      const scaleY = pdfHeight / canvasHeight;
+
+      const signatureX = signaturePosition.x * scaleX;
+      const signatureY = pdfHeight - signaturePosition.y * scaleY - signatureSize.height * scaleY;
+      const signatureWidth = signatureSize.width * scaleX;
+      const signatureHeight = signatureSize.height * scaleY;
+
+      page.drawImage(signatureImage, {
+        x: signatureX,
+        y: signatureY,
+        width: signatureWidth,
+        height: signatureHeight,
+      });
+
+      // บันทึก PDF เป็น bytes
+      const pdfBytes = await pdfDoc.save();
+      console.log('pdfBytes:', pdfBytes);
+
+      // แปลง pdfBytes เป็น base64 string
+      const base64PDF = `data:application/pdf;base64,${Buffer.from(pdfBytes).toString('base64')}`;
+      console.log('base64PDF:', base64PDF);
+
+      // --- เรียกอัปโหลดไป S3 ---
+      const s3Link = await uploadPDFToS3(base64PDF);
+      if (!s3Link) {
+        setError('อัปโหลดไฟล์ไป S3 ไม่สำเร็จ');
+        setIsLoading(false);
+        return;
+      }
+      setPdfLink(s3Link); // แสดงลิงก์ PDF
+      console.log('s3Link:', s3Link);
+
+      // --- เรียกบันทึกลิงก์ใน RDS ---
+      const userId = localStorage.getItem('id') || '';
+      console.log('userId:', userId);
+      console.log('s3Link:', s3Link);
+      console.log('dataPDF:', pdfData);
+      const isSaved = await savePDFtoRDS(userId, s3Link, pdfData);
+      if (!isSaved) {
+        setError('บันทึกข้อมูลในระบบไม่สำเร็จ');
+      } else {
+        setSucceed('บันทึกข้อมูลในระบบสำเร็จ');
+
+        console.log('บันทึกข้อมูลในระบบสำเร็จ');
+      }
+
+      setIsLoading(false);
+    } catch (error: any) {
+      console.error('Error saving PDF:', error);
+      setError(`ไม่สามารถบันทึก PDF ได้: ${error.message}`);
+      setIsLoading(false);
+    }
+  };
+
+
+  const TextSignaturePad: React.FC = () => {
+    const canvasRef = useRef<HTMLCanvasElement>(null)
+    const [text, setText] = useState('')
+    const [fontSize, setFontSize] = useState(40)
+    const [fontFamily] = useState('cursive')
+    const [signatureImage, setSignatureImage] = useState<string | null>(null)
+    const [uploadedImage, setUploadedImage] = useState<File | null>(null)
+
+    const drawSignature = () => {
+      const canvas = canvasRef.current
+      const ctx = canvas?.getContext('2d')
+      if (canvas && ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        ctx.font = `${fontSize}px ${fontFamily}`
+        ctx.fillStyle = 'blue'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(text, canvas.width / 2, canvas.height / 2)
+      }
     }
 
-    setIsLoading(false);
-  } catch (error: any) {
-    console.error('Error saving PDF:', error);
-    setError(`ไม่สามารถบันทึก PDF ได้: ${error.message}`);
-    setIsLoading(false);
+    useEffect(() => {
+      drawSignature()
+    }, [text, fontSize])
+
+    const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      if (file && file.type === 'image/png') {
+        setUploadedImage(file)
+        const reader = new FileReader()
+        reader.onload = () => {
+          const img = new Image()
+          img.onload = () => {
+            const canvas = canvasRef.current
+            const ctx = canvas?.getContext('2d')
+            if (canvas && ctx) {
+              ctx.clearRect(0, 0, canvas.width, canvas.height)
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+            }
+          }
+          if (typeof reader.result === 'string') {
+            img.src = reader.result
+          }
+        }
+        reader.readAsDataURL(file)
+      }
+    }
+
+    const saveSignature = () => {
+      const canvas = canvasRef.current
+      if (canvas) {
+        const dataUrl = canvas.toDataURL('image/png')
+        setSignatureImage(dataUrl)
+        console.log('ลายเซ็น base64:', dataUrl)
+      }
+    }
+
+    const clearCanvas = () => {
+      const canvas = canvasRef.current
+      const ctx = canvas?.getContext('2d')
+      if (canvas && ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        setText('')
+        setSignatureImage(null)
+        setUploadedImage(null)
+      }
+    }
+
+    return (
+      <div className="flex flex-col items-center gap-4 p-4">
+        <canvas
+          ref={canvasRef}
+          width={300}
+          height={150}
+          className="border border-black"
+        />
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={text}
+            placeholder="พิมพ์ชื่อ"
+            onChange={(e) => setText(e.target.value)}
+          />
+          <select value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))}>
+            {[20, 30, 40, 50, 60].map((size) => (
+              <option key={size} value={size}>{size}pt</option>
+            ))}
+          </select>
+        </div>
+        <p className="text-red-600 text-sm">
+          ขนาดรูป (2:1) เช่น 300px × 150px<br />
+          รูปพื้นหลังโปร่งใสประเภทไฟล์ PNG
+        </p>
+        <input type="file" accept="image/png" onChange={handleUpload} />
+        <div className="flex gap-3 mt-2">
+          <button onClick={saveSignature} className="bg-green-600 text-white px-4 py-1 rounded">บันทึก</button>
+          <button onClick={clearCanvas} className="bg-red-600 text-white px-4 py-1 rounded">ล้าง</button>
+        </div>
+        {signatureImage && (
+          <div>
+            <p>ลายเซ็นที่ได้:</p>
+            <img src={signatureImage} alt="signature preview" className="border mt-2" />
+          </div>
+        )}
+      </div>
+    )
   }
-};
-
-
-
 
 
   const handlePlaceImageSignature = (url: string) => {
@@ -476,6 +624,16 @@ const savePdfWithSignature = async () => {
             ลองใหม่
           </button>
         </div>
+      ) : succeed ? (<div className="text-center p-6 bg-white rounded-lg shadow-lg">
+        <div className="text-green-500 text-xl mb-4">✅ สำเร็จ</div>
+        <p className="text-gray-800 mb-4">{succeed}</p>
+        <button
+          onClick={() => window.close()}
+          className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+        >
+          ตกลง
+        </button>
+      </div>
       ) : (
         <div className="w-full max-w-4xl">
           {/* ส่วนด้านบน */}
@@ -549,9 +707,8 @@ const savePdfWithSignature = async () => {
               {/* Draggable Signature Overlay */}
               {showSignatureOnPdf && signatureImgUrl && (
                 <div
-                  className={`absolute border-2 border-dashed border-blue-500 bg-white/10 rounded cursor-move ${
-                    isDraggingSignature ? 'border-blue-700 bg-blue-100/20' : 'hover:border-blue-600'
-                  }`}
+                  className={`absolute border-2 border-dashed border-blue-500 bg-white/10 rounded cursor-move ${isDraggingSignature ? 'border-blue-700 bg-blue-100/20' : 'hover:border-blue-600'
+                    }`}
                   style={{
                     left: signaturePosition.x,
                     top: signaturePosition.y,
@@ -638,23 +795,21 @@ const savePdfWithSignature = async () => {
             className="bg-white p-4 rounded shadow-lg w-[90vw] max-w-sm"
             onClick={e => e.stopPropagation()}
           >
-            <h2 className="text-lg font-semibold mb-2">Signature Mode</h2>
+            <h2 className="text-lg font-semibold mb-2">เลือกรูปแบบลายเซ็น</h2>
             <div className="flex border-b mb-4">
               <button
-                className={`flex-1 px-4 py-2 ${
-                  !isUploadTab ? 'border-b-2 border-blue-600 font-semibold' : 'text-gray-500'
-                }`}
+                className={`flex-1 px-4 py-2 ${!isUploadTab ? 'border-b-2 border-blue-600 font-semibold' : 'text-gray-500'
+                  }`}
                 onClick={() => setIsUploadTab(false)}
               >
                 เซ็น
               </button>
               <button
-                className={`flex-1 px-4 py-2 ${
-                  isUploadTab ? 'border-b-2 border-blue-600 font-semibold' : 'text-gray-500'
-                }`}
+                className={`flex-1 px-4 py-2 ${isUploadTab ? 'border-b-2 border-blue-600 font-semibold' : 'text-gray-500'
+                  }`}
                 onClick={() => setIsUploadTab(true)}
               >
-                อัปโหลดรูป
+                ลายเซ็นของฉัน
               </button>
             </div>
             {!isUploadTab ? (
@@ -688,7 +843,7 @@ const savePdfWithSignature = async () => {
             ) : (
               <>
                 <p className="text-sm text-gray-600 mb-4">
-                  Upload an image to use as your signature.
+                  เลือกลายเซ็นที่ต้องการ
                 </p>
                 {imageSignature.length > 0 ? (
                   <div className="grid grid-cols-2 gap-2">
@@ -703,7 +858,17 @@ const savePdfWithSignature = async () => {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-gray-600 mb-4">No signature uploaded.</p>
+                  <div className="p-8">
+                    <p1 className="text-sm text-gray-600 mb-4">ไม่มีลายเซ็นกรุณาเพิ่มลายเซ็นของคุณ</p1>
+                    <br />
+                    <a href="https://devdev.prachakij.com/paper/SIGN/new_sign.php" target="_blank" rel="noopener noreferrer">
+                      <button>
+                        สร้างลายเซ็น
+                      </button>
+                    </a>
+                    {/* <h1 className="text-2xl font-bold mb-4">สร้างลายเซ็น</h1>
+                    <TextSignaturePad /> */}
+                  </div>
                 )}
               </>
             )}
