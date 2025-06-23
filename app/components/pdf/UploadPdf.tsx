@@ -17,11 +17,12 @@ import SignatureCanvas from 'react-signature-canvas'
 import { PDFDocument, rgb } from 'pdf-lib'
 import { saveAs } from 'file-saver'
 import { loadPdfDocument, renderPdfPage, cancelAllRenders } from '../../utils/pdfUtils'
-import { loadRDSSignAPI } from '@/lib/signature'
+import { loadMemberDetailAPI } from '@/lib/signature'
 import { useSearchParams } from 'next/navigation'
-import { uploadPDFToS3 } from '@/lib/signature'
-import { savePDFtoRDS } from '@/lib/signature'
-import { loadNitrosign } from '@/lib/signature'
+import { createPdfNDA } from '@/lib/signature'
+import { updateLinkPdfNDA } from '@/lib/signature'
+import { uploadToS3 } from '@/utils/s3Utils'
+import { urlToPdf } from './urlToPdf';
 
 
 const UploadPdf = () => {
@@ -55,46 +56,77 @@ const UploadPdf = () => {
   const [isUploadTab, setIsUploadTab] = useState(false)
   const searchParams = useSearchParams()
   const findId = searchParams.get('userId')
-  const runningId = searchParams.get('running')
   const [pdfData, setPdfData] = useState<Uint8Array | null>(null);
   const [bytes, setBytes] = useState<Uint8Array | null>(null);
 
 
   useEffect(() => {
-    loadRDSSignAPI(findId)
+    loadMemberDetailAPI(findId)
       .then(data => {
-        if (data.length > 0) {
-          setImageSignature(data)
-          console.log('ลายเซ็นที่โหลดจาก RDS:', data)
+        if (data) {
+            const urlParams = new URLSearchParams(window.location.search);
+  const userIdParam = urlParams.get('userId');
+  const pdfUrlParam = urlParams.get('pdfUrl');
+          const full_name_th = `${data.name_th} ${data.surname_th}`;
+          const full_name_en = `${data.name_en} ${data.surname_en}`;
+          console.log('data.datein:', data.date_in);
+          createPdfNDA(
+          userIdParam ?? '',
+          data.thprefix ?? '',
+          full_name_th,
+          full_name_en,
+          data.date_in ?? '',
+          data.company_management ?? '',
+          data.typeNDA ?? ''
+        );
+
+          console.log("full_name_th:",full_name_th);
+        //   // getSpreadsheetRange(data.company_management,data.typeNDA)
+        //   localStorage.setItem('full_name_th', full_name_th);
+        //   localStorage.setItem('full_name_en', full_name_en);
+        //   localStorage.setItem('thprefix', data.thprefix ?? '');
+        //   localStorage.setItem('datein', data.datein ?? '');
+        //   localStorage.setItem('division_name_gr', data.company_management ?? '');
+        //   localStorage.setItem('type_NDA', data.typeNDA ?? '');
+        //   // setMemberData(data); // <== สมมุติคุณมี useState ชื่อ setMemberData
+
+        //   console.log('ข้อมูลสมาชิก:', data);
+        //           console.log(createPdfNDA(
+        //   userIdParam ?? '',
+        //   data.thprefix ?? '',
+        //   full_name_th,
+        //   full_name_en,
+        //   data.datein ?? '',
+        //   data.company_management ?? '',
+        //   data.typeNDA ?? ''
+        // ));
+        //           console.log('123456789');
+
+        // //    createPdfNDA(
+        // //   userIdParam ?? '',
+        // //   data.thprefix ?? '',
+        // //   full_name_th,
+        // //   full_name_en,
+        // //   data.datein ?? '',
+        // //   data.company_management ?? '',
+        // //   data.typeNDA ?? ''
+        // // );
+
         } else {
-          console.warn('ไม่พบลายเซ็นใน RDS')
+          console.warn('ไม่พบข้อมูลสมาชิก');
         }
       })
-      .catch(error => {
-        console.error('Error loading signatures from RDS:', error)
-        setError('ไม่สามารถโหลดลายเซ็นจาก RDS ได้')
-      })
-    loadNitrosign(runningId)
-      .then(data => {
-        if (data.length > 0) {
-          setPdfData(data)
-          console.log('เอกสารที่โหลดจาก RDS:', data)
-        } else {
-          console.warn('ไม่พบเอกสารใน RDS')
-        }
-      })
-      .catch(error => {
-        console.error('Error loading signatures from RDS:', error)
-        setError('ไม่สามารถโหลดเอกสารจาก RDS ได้')
-      })
+      // .catch(error => {
+      //   console.error('เกิดข้อผิดพลาดในการโหลดข้อมูลสมาชิก:', error);
+      //   setError('ไม่สามารถโหลดข้อมูลสมาชิกได้');
+      // });
+
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search)
       const pdfUrlParam = urlParams.get('pdfUrl')
       const userIdParam = urlParams.get('userId')
-      const runningIdParam = urlParams.get('running')
       console.log('userIdParam:', userIdParam)
       console.log('pdfUrlParam:', pdfUrlParam)
-      console.log('runningIdParam:', runningIdParam)
 
       if (userIdParam) {
         localStorage.setItem('id', userIdParam)
@@ -368,14 +400,11 @@ const UploadPdf = () => {
           setTimeout(() => setShowCopiedTooltip(false), 2000);
           console.log('ลอกลิงค์สำเร็จ');
           console.log('pdfLink:', pdfLink);
+          const userId = localStorage.getItem('id') || '';
           console.log('userId:', userId);
-          console.log('dataPDF:', dataPDF);
-          // เรียก savePDFtoRDS หลังคัดลอกสำเร็จ
-          const success = await savePDFtoRDS({
-            id: userId,               // <-- เปลี่ยนเป็นค่าจริงที่คุณมี
-            linkPDF: pdfLink,
-            dataPDF: dataPDF[0],         // <-- ใส่ dataPDF ที่คุณมี
-          });
+          console.log('dataPDF:', pdfData);
+          // เรียก updateLinkPdfNDA หลังคัดลอกสำเร็จ
+          const success = await updateLinkPdfNDA(pdfLink);
 
           if (!success) {
             setError('บันทึกลิงก์ไม่สำเร็จ');
@@ -443,17 +472,23 @@ const UploadPdf = () => {
         width: signatureWidth,
         height: signatureHeight,
       });
-
+      const id = localStorage.getItem('id') ?? '';
+      const thprefix = localStorage.getItem('thprefix') ?? '';
+      const full_name_th = localStorage.getItem('full_name_th') ?? '';
+      const full_name_en = localStorage.getItem('full_name_en') ?? '';
+      const date_in = localStorage.getItem('datein') ?? '';
+      const company_management = localStorage.getItem('division_name_gr') ?? '';
+      const type_NDA = localStorage.getItem('type_NDA') ?? '';
       // บันทึก PDF เป็น bytes
       const pdfBytes = await pdfDoc.save();
       console.log('pdfBytes:', pdfBytes);
 
       // แปลง pdfBytes เป็น base64 string
       const base64PDF = `data:application/pdf;base64,${Buffer.from(pdfBytes).toString('base64')}`;
-      console.log('base64PDF:', base64PDF);
 
       // --- เรียกอัปโหลดไป S3 ---
-      const s3Link = await uploadPDFToS3(base64PDF);
+      // console.log('base64PDF:', base64PDF, '0', findId, thprefix, full_name_th, full_name_en, date_in);
+      const s3Link = await uploadToS3(base64PDF, `${findId}_${full_name_th}.pdf`, 'application/pdf', findId || 'web_user');
       if (!s3Link) {
         setError('อัปโหลดไฟล์ไป S3 ไม่สำเร็จ');
         setIsLoading(false);
@@ -467,13 +502,13 @@ const UploadPdf = () => {
       console.log('userId:', userId);
       console.log('s3Link:', s3Link);
       console.log('dataPDF:', pdfData);
-      const isSaved = await savePDFtoRDS(userId, s3Link, pdfData);
-      if (!isSaved) {
-        setError('บันทึกข้อมูลในระบบไม่สำเร็จ');
-      } else {
+      try {
+        await updateLinkPdfNDA(s3Link);
         setSucceed('บันทึกข้อมูลในระบบสำเร็จ');
-
         console.log('บันทึกข้อมูลในระบบสำเร็จ');
+      } catch (error) {
+        console.error('Error updating PDF link:', error);
+        setError('บันทึกลิงก์ไม่สำเร็จ');
       }
 
       setIsLoading(false);
@@ -756,6 +791,35 @@ const UploadPdf = () => {
             </div>
 
             {/* Rendering indicator */}
+
+            {totalPages > 1 && (
+              <div className="flex justify-center mt-6">
+                <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-full shadow-md">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage <= 1}
+                    className="p-2 text-blue-600 disabled:text-gray-300 transition-colors"
+                    aria-label="หน้าก่อนหน้า"
+                  >
+                    <ChevronLeft size={24} />
+                  </button>
+
+                  <span className="text-lg font-semibold text-gray-800 mx-2 min-w-[60px] text-center">
+                    {currentPage} / {totalPages}
+                  </span>
+
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage >= totalPages}
+                    className="p-2 text-blue-600 disabled:text-gray-300 transition-colors"
+                    aria-label="หน้าถัดไป"
+                  >
+                    <ChevronRight size={24} />
+                  </button>
+                </div>
+              </div>
+            )}
+
             {isRendering && (
               <div className="absolute inset-0 bg-white/50 flex items-center justify-center rounded-lg">
                 <div className="bg-white p-3 rounded-lg shadow-lg flex items-center space-x-2">

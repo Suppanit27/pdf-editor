@@ -1,137 +1,146 @@
 // lib/api.ts
 import axios from 'axios';
+import puppeteer from 'puppeteer';
+import fs from 'fs';
+import path from 'path';
+import { apiPost } from '@/app/utils/apiPost';
 
 const API_URL = 'https://mhmo3nnbr5.execute-api.ap-southeast-1.amazonaws.com/latest';
-const PDFToS3_URL = 'https://oxphgjyvu2.execute-api.ap-southeast-1.amazonaws.com/latest/uploadPDFS3_Center';
-const SavePDFPayload = 'https://mhmo3nnbr5.execute-api.ap-southeast-1.amazonaws.com/latest';
+const OldsendTelegramPKG ='https://dockerapi-ci.prachakij.com/jwtauth';
 
-export const loadRDSSignAPI = async (id: string): Promise<string[]> => {
+
+export interface MemberDetail {
+  id: string;
+  name: string;
+  email?: string;
+  // เพิ่ม field ที่ต้องการใช้งานต่อ เช่น position, department ฯลฯ
+}
+
+export const loadMemberDetailAPI = async (id: string): Promise<MemberDetail | null> => {
   try {
     const payload = {
-      menu: 'searchSignRDS',
+      menu: 'loaddetailmember',
       id,
     };
-
     const response = await axios.post(API_URL, payload);
 
-    if (response.data.statusCode?.toString() === '200') {
-      return response.data.result?.map((data: any) => data.url) || [];
+    if (response.status?.toString() === '200') {
+      const result = response.data;
+
+      if (Array.isArray(result) && result.length > 0) {
+        return result[0] as MemberDetail;
+
+      }
+      return null;
     } else {
-      console.warn('No data!!');
-      return [];
+      console.warn('loadMemberDetailAPI: No data returned');
+      return null;
     }
   } catch (error) {
-    console.error('Error in loadRDSSignAPI:', error);
-    return [];
+    console.error('Error in loadMemberDetailAPI:', error);
+    return null;
   }
 };
 
-export const uploadPDFToS3 = async (base64PDF: string): Promise<string | null> => {
+export async function createPdfNDA(
+  id: string,
+  thprefix: string,
+  full_name_th: string,
+  full_name_en: string,
+  date_in: string,
+  company: string,
+  typeNDA: string
+): Promise<void> {
+  let spreadsheets_range = ''
+
+  // if (company === 'RAFCOgr') {
+  //   spreadsheets_range = typeNDA === 'RAFCO_RPTN'
+  //     ? 'P_สัญญาไม่เปิดเผยข้อมูลที่เป็นความลับ_RAFCO_RPTN!A1:G'
+  //     : 'P_สัญญาไม่เปิดเผยข้อมูลที่เป็นความลับ_RAFCO_AIIL!A1:G'
+  // } else if (company === 'RPLCgr') {
+  //   spreadsheets_range = typeNDA === 'RPLC_RUAM'
+  //     ? 'P_สัญญาไม่เปิดเผยข้อมูลที่เป็นความลับ_RPLC_Ruam!A1:G'
+  //     : 'P_สัญญาไม่เปิดเผยข้อมูลที่เป็นความลับ_RPLC_RAFCO!A1:G'
+  // } else {
+    spreadsheets_range = 'P_สัญญาไม่เปิดเผยข้อมูลที่เป็นความลับ!A1:G'
+  // }
+
+  const url = `http://webapp.prachakij.com:8080/BCT/Print_document_by_form_Spreadsheet_NDA.jsp?spreadsheets_key=1oy1_NhCkvRbdtbC-vSH7B7_M7FRvU327yl5qB_1bIic&spreadsheets_range=` +
+          spreadsheets_range.toString() +
+          "&member_name_th=" +
+          thprefix +
+          "" +
+          full_name_th.toString() +
+          "&member_name_en=" +
+          full_name_en.toString() +
+          "&date_in_work=" +
+          date_in.toString() +
+          "&member_id=" +
+          id.toString();
+  console.log('Generated URL:', url)
+  const payload = {
+    url,
+    name: `${id}_${full_name_th}`,
+    bucket: 'url2img-pdf',
+    path: 'pdf/MS24/PDF_NDA',
+    format: 'A4',
+    pageRanges: 'all',
+    rout: 'urltopdf'
+  }
+  console.log('payload:', payload)
+  console.log('123456:')
+
+apiPost("https://dockerapi-ci.prachakij.com/jwtauth", payload)
+  .then(result => {
+    console.log("PDF created:", result);
+    updateLinkPdfNDA(result.toString());
+  })
+  .catch(error => {
+    console.error("Error:", error.message);
+  });
+  // try {
+  //     console.log(payload);
+  //     updateLinkPdfNDA(response.toString());
+  //   // urlToPdf(url, './pdf_output', `${id}_${full_name_th}.pdf`)
+  // } catch (error) {
+  //   console.error('API call failed:', error)
+  // }
+}
+
+export async function updateLinkPdfNDA(dataLinkNDA: string) {
   try {
+    const id = localStorage.getItem('id')
+    const email = localStorage.getItem('email1')
+
+    const now = new Date()
+    const dateUpdate = now.toLocaleDateString('th-TH') // หรือใช้ dayjs/format แทน
+
     const payload = {
-      name: 'MappMS',
-      folder: 'MappMS/signPDF',
-      image: base64PDF.replace(/^data:application\/pdf;base64,/, '') // ตัด prefix ออก
-    };
-
-    const response = await fetch('https://oxphgjyvu2.execute-api.ap-southeast-1.amazonaws.com/latest/uploadPDFS3_Center', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const json = await response.json();
-    if (json.statusCode?.toString() === '200') {
-      return json.result.url.Location; // ✅ ลิงก์ที่อัปโหลดเสร็จ
-    } else {
-      console.error('S3 Upload Failed:', json);
-      return null;
-    }
-  } catch (error) {
-    console.error('Error in uploadPDFToS3:', error);
-    return null;
-  }
-};
-
-
-interface SavePDFPayload {
-  id: string;
-  linkPDF: string;
-  dataPDF: any; // ปรับตามโครงสร้างข้อมูลจริงของคุณ
-  system?: string;
-}
-
-export const savePDFtoRDS = async (id: string, linkPDF: string, dataPDF: any): Promise<boolean> => {
-  try {
-    const requestBody = {
-      menu: 'saveSignRDSweb',
+      menu: 'updateLinkPdfNDA',
       id,
-      linkPDF,
-      member_id_approve: dataPDF[0]?.member_id_approve,
-      member_id_approve2: dataPDF[0]?.member_id_approve2,
-      member_id_approve3: dataPDF[0]?.member_id_approve3,
-      member_id_approve4: dataPDF[0]?.member_id_approve4,
-      member_id_approve5: dataPDF[0]?.member_id_approve5,
-      member_status_approve: dataPDF[0]?.member_status_approve,
-      member_status_approve2: dataPDF[0]?.member_status_approve2,
-      member_status_approve3: dataPDF[0]?.member_status_approve3,
-      member_status_approve4: dataPDF[0]?.member_status_approve4,
-      member_status_approve5: dataPDF[0]?.member_status_approve5,
-      refer_id: dataPDF[0]?.refer_id,
-      running: dataPDF[0]?.running,
-      system: 'App_MS24',
-    };
-    console.log('requestBody:', requestBody);
-    console.log('dataPDF:', dataPDF[0]?.member_id_approve,);
+      email,
+      linkNDA: dataLinkNDA,
+      dateUpdate
+    }
+    console.log('Payload for updateLinkPdfNDA:', payload)
+    const response = await axios.post(
+      'https://mhmo3nnbr5.execute-api.ap-southeast-1.amazonaws.com/latest',
+      payload
+    )      
+    console.log('response from updateLinkPdfNDA:', response.data)
 
-//     dataPDF.forEach((item, index) => {
-//   console.log(`Item ${index} running:`, item.running);
-// });
-    const response = await axios.post(API_URL, requestBody);
 
-    console.log('response:', response.data);
     if (response.data.statusCode?.toString() === '200') {
-      console.log('Save success!');
-      return true;
+      console.log('อัพเดทเรียบร้อย')
+      // แสดง PDF: อาจโหลดซ้ำหรือ setState
+      // เช่น: window.open(dataLinkNDA)
     } else {
-      console.warn('Save fail!');
-      return false;
+      console.warn('ไม่สามารถอัพเดทลิงก์ได้:', response.data.msg)
     }
   } catch (error) {
-    console.error('Error in savePDFtoRDS:', error);
-    return false;
+    console.error('เกิดข้อผิดพลาดขณะอัปเดตลิงก์ NDA:', error)
   }
-};
-
-export const loadNitrosign = async (running: string): Promise<Uint8Array | null> => {
-  try {
-    const requestBody = {
-      menu: 'searchNitrosignrunning',
-      running,
-    };
-    const response = await axios.post(API_URL, requestBody);
-    console.log('response:', response.data);
-    if (response.data.statusCode?.toString() === '200') {
-      console.log('Load success!');
-      const dataPDF = response.data.result;
-      return dataPDF; // Return the actual PDF data
-    } else {
-      console.warn('Load failed!');
-      return null;
-    }
-  } catch (error) {
-    console.error('Error in loadNitrosign:', error);
-    return null;
-  }
-};
-
-async function fetchSignatureAsBytes(url: string): Promise<Uint8Array> {
-  const response = await fetch(url, { mode: 'cors' });
-  if (!response.ok) {
-    throw new Error(`โหลดลายเซ็นไม่สำเร็จ: ${response.status}`);
-  }
-  const buffer = await response.arrayBuffer();
-  return new Uint8Array(buffer);
 }
+
+
+
