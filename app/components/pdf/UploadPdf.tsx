@@ -756,6 +756,33 @@ const UploadPdf = () => {
             </div>
 
             {/* Rendering indicator */}
+                        {totalPages > 1 && (
+              <div className="flex justify-center mt-6">
+                <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-full shadow-md">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage <= 1}
+                    className="p-2 text-blue-600 disabled:text-gray-300 transition-colors"
+                    aria-label="หน้าก่อนหน้า"
+                  >
+                    <ChevronLeft size={24} />
+                  </button>
+
+                  <span className="text-lg font-semibold text-gray-800 mx-2 min-w-[60px] text-center">
+                    {currentPage} / {totalPages}
+                  </span>
+
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage >= totalPages}
+                    className="p-2 text-blue-600 disabled:text-gray-300 transition-colors"
+                    aria-label="หน้าถัดไป"
+                  >
+                    <ChevronRight size={24} />
+                  </button>
+                </div>
+              </div>
+            )}
             {isRendering && (
               <div className="absolute inset-0 bg-white/50 flex items-center justify-center rounded-lg">
                 <div className="bg-white p-3 rounded-lg shadow-lg flex items-center space-x-2">
