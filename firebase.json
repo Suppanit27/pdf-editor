@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "target": "testsignms",
+    "target": "sign-nda",
     "public": "out",
     "ignore": [
       "firebase.json",

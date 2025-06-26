@@ -19,10 +19,10 @@ import { saveAs } from 'file-saver'
 import { loadPdfDocument, renderPdfPage, cancelAllRenders } from '../../utils/pdfUtils'
 import { loadMemberDetailAPI } from '@/lib/signature'
 import { useSearchParams } from 'next/navigation'
-import { createPdfNDA } from '@/lib/signature'
-import { updateLinkPdfNDA } from '@/lib/signature'
-import { uploadToS3 } from '@/utils/s3Utils'
-import { urlToPdf } from './urlToPdf';
+import { loadLinkNDA } from '@/lib/signature'
+import { createPdfNDADoc } from '@/lib/signature'
+import { uploadPDFToS3 } from '@/lib/signature';
+import { updateLinkPdfNDASuccess } from '@/lib/signature';
 
 
 const UploadPdf = () => {
@@ -58,93 +58,63 @@ const UploadPdf = () => {
   const findId = searchParams.get('userId')
   const [pdfData, setPdfData] = useState<Uint8Array | null>(null);
   const [bytes, setBytes] = useState<Uint8Array | null>(null);
+  const [result, setResult] = useState<string>('');
 
 
-  useEffect(() => {
-    loadMemberDetailAPI(findId)
-      .then(data => {
-        if (data) {
-            const urlParams = new URLSearchParams(window.location.search);
-  const userIdParam = urlParams.get('userId');
-  const pdfUrlParam = urlParams.get('pdfUrl');
-          const full_name_th = `${data.name_th} ${data.surname_th}`;
-          const full_name_en = `${data.name_en} ${data.surname_en}`;
-          console.log('data.datein:', data.date_in);
-          createPdfNDA(
-          userIdParam ?? '',
-          data.thprefix ?? '',
-          full_name_th,
-          full_name_en,
-          data.date_in ?? '',
-          data.company_management ?? '',
-          data.typeNDA ?? ''
-        );
 
-          console.log("full_name_th:",full_name_th);
-        //   // getSpreadsheetRange(data.company_management,data.typeNDA)
-        //   localStorage.setItem('full_name_th', full_name_th);
-        //   localStorage.setItem('full_name_en', full_name_en);
-        //   localStorage.setItem('thprefix', data.thprefix ?? '');
-        //   localStorage.setItem('datein', data.datein ?? '');
-        //   localStorage.setItem('division_name_gr', data.company_management ?? '');
-        //   localStorage.setItem('type_NDA', data.typeNDA ?? '');
-        //   // setMemberData(data); // <== สมมุติคุณมี useState ชื่อ setMemberData
+useEffect(() => {
+  const fetchData = async () => {
+    try {
 
-        //   console.log('ข้อมูลสมาชิก:', data);
-        //           console.log(createPdfNDA(
-        //   userIdParam ?? '',
-        //   data.thprefix ?? '',
-        //   full_name_th,
-        //   full_name_en,
-        //   data.datein ?? '',
-        //   data.company_management ?? '',
-        //   data.typeNDA ?? ''
-        // ));
-        //           console.log('123456789');
+      const data = await loadMemberDetailAPI(findId);
 
-        // //    createPdfNDA(
-        // //   userIdParam ?? '',
-        // //   data.thprefix ?? '',
-        // //   full_name_th,
-        // //   full_name_en,
-        // //   data.datein ?? '',
-        // //   data.company_management ?? '',
-        // //   data.typeNDA ?? ''
-        // // );
+      const full_name_th = `${data.name_th} ${data.surname_th}`;
+      const full_name_en = `${data.name_en} ${data.surname_en}`;
+      setIsLoading(true); // เริ่มโหลด
 
-        } else {
-          console.warn('ไม่พบข้อมูลสมาชิก');
-        }
-      })
-      // .catch(error => {
-      //   console.error('เกิดข้อผิดพลาดในการโหลดข้อมูลสมาชิก:', error);
-      //   setError('ไม่สามารถโหลดข้อมูลสมาชิกได้');
-      // });
+      const resultUrl = await loadLinkNDA(
+        data.id ?? '',
+        data.email1 ?? '',
+        data.thprefix ?? '',
+        full_name_th,
+        full_name_en,
+        data.date_in ?? '',
+        data.company_management ?? '',
+        data.typeNDA ?? ''
+      );
 
-    if (typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search)
-      const pdfUrlParam = urlParams.get('pdfUrl')
-      const userIdParam = urlParams.get('userId')
-      console.log('userIdParam:', userIdParam)
-      console.log('pdfUrlParam:', pdfUrlParam)
+      console.log('🔗 PDF URL from loadLinkNDA:', resultUrl);
 
-      if (userIdParam) {
-        localStorage.setItem('id', userIdParam)
-        localStorage.setItem('currentSignatureUserId', userIdParam)
-      }
-
-      if (pdfUrlParam) {
-
-        setPdfUrl(pdfUrlParam)
-        loadPdfFromUrl(pdfUrlParam)
+      if (resultUrl) {
+        setPdfUrl(resultUrl); // ส่งลิงก์ PDF ไปให้ Viewer
+        loadPdfFromUrl(resultUrl); // โหลด PDF
       } else {
-        setIsLoading(false)
+        console.warn('ไม่พบลิงก์ PDF จาก loadLinkNDA');
       }
+
+      // URL params (เพิ่มเติม)
+      const urlParams = new URLSearchParams(window.location.search);
+      const userIdParam = urlParams.get('userId');
+      if (userIdParam) {
+        localStorage.setItem('id', userIdParam);
+        localStorage.setItem('currentSignatureUserId', userIdParam);
+      }
+
+    } catch (error) {
+      console.error('❌ Error loading member or NDA link:', error);
+    } finally {
+      setIsLoading(false); // จบการโหลด
     }
-  }, [])
+  };
+
+  fetchData();
+}, []);
+
 
 
   const loadPdfFromUrl = async (url: string) => {
+  setIsLoading(true);
+
     setIsLoading(true)
     setError(null)
 
@@ -449,6 +419,8 @@ const UploadPdf = () => {
         console.log("signatureImage:", signatureImage);
 
       }
+      console.log("signatureImage:",signatureImage);
+
 
       const pages = pdfDoc.getPages();
       const page = pages[currentPage - 1];
@@ -473,6 +445,7 @@ const UploadPdf = () => {
         height: signatureHeight,
       });
       const id = localStorage.getItem('id') ?? '';
+      const email = localStorage.getItem('email1') ?? '';
       const thprefix = localStorage.getItem('thprefix') ?? '';
       const full_name_th = localStorage.getItem('full_name_th') ?? '';
       const full_name_en = localStorage.getItem('full_name_en') ?? '';
@@ -481,14 +454,14 @@ const UploadPdf = () => {
       const type_NDA = localStorage.getItem('type_NDA') ?? '';
       // บันทึก PDF เป็น bytes
       const pdfBytes = await pdfDoc.save();
-      console.log('pdfBytes:', pdfBytes);
 
       // แปลง pdfBytes เป็น base64 string
       const base64PDF = `data:application/pdf;base64,${Buffer.from(pdfBytes).toString('base64')}`;
 
       // --- เรียกอัปโหลดไป S3 ---
       // console.log('base64PDF:', base64PDF, '0', findId, thprefix, full_name_th, full_name_en, date_in);
-      const s3Link = await uploadToS3(base64PDF, `${findId}_${full_name_th}.pdf`, 'application/pdf', findId || 'web_user');
+      const s3Link = await uploadPDFToS3(base64PDF);
+      console.log("s3Link:",s3Link);
       if (!s3Link) {
         setError('อัปโหลดไฟล์ไป S3 ไม่สำเร็จ');
         setIsLoading(false);
@@ -499,11 +472,10 @@ const UploadPdf = () => {
 
       // --- เรียกบันทึกลิงก์ใน RDS ---
       const userId = localStorage.getItem('id') || '';
-      console.log('userId:', userId);
-      console.log('s3Link:', s3Link);
-      console.log('dataPDF:', pdfData);
       try {
-        await updateLinkPdfNDA(s3Link);
+        const email = localStorage.getItem('email1') ?? '';
+
+        await updateLinkPdfNDASuccess(email,s3Link);
         setSucceed('บันทึกข้อมูลในระบบสำเร็จ');
         console.log('บันทึกข้อมูลในระบบสำเร็จ');
       } catch (error) {

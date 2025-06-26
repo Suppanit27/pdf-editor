@@ -11,8 +11,11 @@
         "singms24": [
           "testsignms"
         ],
-        "testsignms": [
+        "sing-nda": [
           "singms24"
+        ],
+        "sign-nda": [
+          "sign-nda"
         ]
       }
     }
